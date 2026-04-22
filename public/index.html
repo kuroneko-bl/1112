@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Выставочный центр Технопарк</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="container">
+            <a href="index.html" class="navbar-brand">Технопарк</a>
+            <div class="navbar-menu">
+                <a href="index.html">Главная</a>
+                <a href="login.html" id="loginLink">Вход</a>
+                <a href="dashboard.html" id="dashboardLink" style="display:none;">Личный кабинет</a>
+                <span id="userInfo" style="display:none;"></span>
+                <a href="#" id="logoutBtn" style="display:none;">Выход</a>
+            </div>
+        </div>
+    </nav>
+    
+    <div class="container">
+        <div class="card">
+            <div class="card-header">
+                О выставках-ярмарках
+            </div>
+            <p>Добро пожаловать в систему управления выставочно-ярмарочными мероприятиями делового центра «Технопарк».</p>
+            <p>Наша платформа позволяет:</p>
+            <ul style="margin-left: 20px; margin-top: 10px;">
+                <li>Просматривать актуальные выставки</li>
+                <li>Подавать заявки на участие</li>
+                <li>Отслеживать статус заявок</li>
+                <li>Участвовать в конкурсах и получать награды</li>
+                <li>Заключать контракты между участниками</li>
+            </ul>
+        </div>
+        
+        <div class="card">
+            <div class="card-header">
+                Текущие выставки
+            </div>
+            <div id="exhibitionsList"></div>
+        </div>
+        
+        <div class="card" id="applicationCard" style="display:none;">
+            <div class="card-header">
+                Подать заявку на участие
+            </div>
+            <div id="authWarning" class="alert alert-warning" style="display:none; background: #f1efa9;">
+                Для подачи заявки необходимо <a href="login.html" style="color: #744210;">авторизоваться</a>
+            </div>
+            <form id="applicationForm">
+                <div class="form-group">
+                    <label>Выберите выставку</label>
+                    <select id="exhibitionSelect" required>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Название компании</label>
+                    <input type="text" id="companyName" required>
+                </div>
+                <div class="form-group">
+                    <label>Контактное лицо</label>
+                    <input type="text" id="contactPerson">
+                </div>
+                <div class="form-group">
+                    <label>Телефон</label>
+                    <input type="tel" id="phone">
+                </div>
+                <div class="form-group">
+                    <label>Email</label>
+                    <input type="email" id="email">
+                </div>
+                <div class="form-group">
+                    <label>Необходимые услуги</label>
+                    <textarea id="services" rows="3" placeholder="Например: выставочный стенд, подключение к электричеству, интернет и т.д."></textarea>
+                </div>
+                <button type="submit" class="btn btn-primary" id="submitBtn">Отправить заявку</button>
+            </form>
+            <div id="appMsg"></div>
+        </div>
+    </div>
+    
+    <script>
+        const API_URL = 'http://localhost:5000/api';
+        let currentUser = null;
+        let authToken = null;
+        
+        // Проверка авторизации
+        function checkAuth() {
+            authToken = localStorage.getItem('token');
+            const userStr = localStorage.getItem('user');
+            
+            if (authToken && userStr) {
+                try {
+                    currentUser = JSON.parse(userStr);
+                    return true;
+                } catch(e) {
+                    return false;
+                }
+            }
+            return false;
+        }
+        
+        // Обновление UI в зависимости от авторизации
+        function updateUIForAuth() {
+            const isAuth = checkAuth();
+            
+            if (isAuth && currentUser) {
+                // Пользователь авторизован
+                document.getElementById('loginLink').style.display = 'none';
+                document.getElementById('dashboardLink').style.display = 'inline';
+                document.getElementById('userInfo').style.display = 'inline';
+                document.getElementById('logoutBtn').style.display = 'inline';
+                document.getElementById('applicationCard').style.display = 'block';
+                document.getElementById('authWarning').style.display = 'none';
+                
+                document.getElementById('userInfo').innerHTML = `${currentUser.fullName || currentUser.username} (${currentUser.role === 'admin' ? 'Админ' : currentUser.role === 'director' ? 'Директор' : 'Пользователь'})`;
+                
+                // Загружаем выставки для select
+                loadExhibitionsForSelect();
+            } else {
+                // Пользователь не авторизован
+                document.getElementById('loginLink').style.display = 'inline';
+                document.getElementById('dashboardLink').style.display = 'none';
+                document.getElementById('userInfo').style.display = 'none';
+                document.getElementById('logoutBtn').style.display = 'none';
+                document.getElementById('applicationCard').style.display = 'block';
+                document.getElementById('authWarning').style.display = 'block';
+                document.getElementById('submitBtn').disabled = true;
+            }
+        }
+        
+        // Выход
+        function logout() {
+            localStorage.removeItem('token');
+            localStorage.removeItem('user');
+            window.location.reload();
+        }
+        
+        document.getElementById('logoutBtn').addEventListener('click', (e) => {
+            e.preventDefault();
+            logout();
+        });
+        
+        // Загрузка списка выставок для отображения
+        async function loadExhibitionsList() {
+            try {
+                // Для публичного просмотра выставок не нужна авторизация
+                const response = await fetch(`${API_URL}/exhibitions`, {
+                    headers: authToken ? { 'Authorization': `Bearer ${authToken}` } : {}
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Ошибка загрузки');
+                }
+                
+                const exhibitions = await response.json();
+                const container = document.getElementById('exhibitionsList');
+                
+                if (exhibitions.length === 0) {
+                    container.innerHTML = '<p>На данный момент нет запланированных выставок</p>';
+                    return;
+                }
+                
+                container.innerHTML = `
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>Название выставки</th>
+                                <th>Тематика</th>
+                                <th>Дата проведения</th>
+                                <th>Директор</th>
+                                <th>Статус</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${exhibitions.map(ex => `
+                                <tr>
+                                    <td><strong>${escapeHtml(ex.name)}</strong></td>
+                                    <td>${escapeHtml(ex.theme || '-')}</td>
+                                    <td>${ex.startDate ? new Date(ex.startDate).toLocaleDateString() : '-'} - ${ex.endDate ? new Date(ex.endDate).toLocaleDateString() : '-'}</td>
+                                    <td>${escapeHtml(ex.director || '-')}</td>
+                                    <td>${getExhibitionStatus(ex.status)}</span></td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                `;
+            } catch (error) {
+                console.error('Ошибка загрузки выставок:', error);
+                document.getElementById('exhibitionsList').innerHTML = '<p> Ошибка загрузки выставок. Убедитесь, что сервер запущен.</p>';
+            }
+        }
+        
+        function getExhibitionStatus(status) {
+            const statuses = {
+                'planning': 'Планируется',
+                'preparation': 'Подготовка',
+                'active': 'Идет сейчас',
+                'completed': 'Завершена'
+            };
+            return statuses[status] || status;
+        }
+        
+        // Загрузка выставок для select в форме
+        async function loadExhibitionsForSelect() {
+            if (!authToken) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${API_URL}/exhibitions`, {
+                    headers: { 'Authorization': `Bearer ${authToken}` }
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Ошибка загрузки');
+                }
+                
+                const exhibitions = await response.json();
+                const select = document.getElementById('exhibitionSelect');
+                
+                if (exhibitions.length === 0) {
+                    select.innerHTML = '<option value="">-- Нет доступных выставок --</option>';
+                    return;
+                }
+                
+                // Показываем только активные и предстоящие выставки
+                const activeExhibitions = exhibitions.filter(ex => 
+                    ex.status === 'planning' || ex.status === 'preparation' || ex.status === 'active'
+                );
+                
+                if (activeExhibitions.length === 0) {
+                    select.innerHTML = '<option value="">-- Нет активных выставок --</option>';
+                    return;
+                }
+                
+                select.innerHTML = '<option value="">Выберите выставку</option>' + 
+                    activeExhibitions.map(ex => `<option value="${ex._id}">${escapeHtml(ex.name)} (${ex.startDate ? new Date(ex.startDate).toLocaleDateString() : 'дата уточняется'})</option>`).join('');
+            } catch (error) {
+                console.error('Ошибка загрузки выставок для select:', error);
+                document.getElementById('exhibitionSelect').innerHTML = '<option value="">-- Ошибка загрузки --</option>';
+            }
+        }
+        
+        function escapeHtml(str) {
+            if (!str) return '';
+            return str.replace(/[&<>]/g, function(m) {
+                if (m === '&') return '&amp;';
+                if (m === '<') return '&lt;';
+                if (m === '>') return '&gt;';
+                return m;
+            });
+        }
+        
+        // Обработка отправки заявки
+        if (document.getElementById('applicationForm')) {
+            document.getElementById('applicationForm').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                
+                if (!authToken) {
+                    alert('Для подачи заявки необходимо авторизоваться');
+                    window.location.href = 'login.html';
+                    return;
+                }
+                
+                const exhibitionId = document.getElementById('exhibitionSelect').value;
+                if (!exhibitionId) {
+                    alert('Пожалуйста, выберите выставку');
+                    return;
+                }
+                
+                const application = {
+                    exhibitionId: exhibitionId,
+                    companyName: document.getElementById('companyName').value.trim(),
+                    contactPerson: document.getElementById('contactPerson').value.trim(),
+                    phone: document.getElementById('phone').value.trim(),
+                    email: document.getElementById('email').value.trim(),
+                    services: document.getElementById('services').value.trim(),
+                    status: 'pending'
+                };
+                
+                if (!application.companyName) {
+                    alert('Введите название компании');
+                    return;
+                }
+                
+                // Отключаем кнопку на время отправки
+                const submitBtn = document.getElementById('submitBtn');
+                submitBtn.disabled = true;
+                submitBtn.textContent = 'Отправка...';
+                
+                try {
+                    const response = await fetch(`${API_URL}/applications`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${authToken}`
+                        },
+                        body: JSON.stringify(application)
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (response.ok) {
+                        const msgDiv = document.getElementById('appMsg');
+                        msgDiv.innerHTML = '<div class="alert alert-success">Заявка успешно отправлена! Ожидайте подтверждения. Мы свяжемся с вами в ближайшее время.</div>';
+                        document.getElementById('applicationForm').reset();
+                        setTimeout(() => {
+                            msgDiv.innerHTML = '';
+                        }, 5000);
+                    } else {
+                        throw new Error(result.error || 'Ошибка при отправке');
+                    }
+                } catch (error) {
+                    console.error('Ошибка:', error);
+                    document.getElementById('appMsg').innerHTML = `<div class="alert alert-error"> ${error.message}</div>`;
+                    setTimeout(() => {
+                        document.getElementById('appMsg').innerHTML = '';
+                    }, 5000);
+                } finally {
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = 'Отправить заявку';
+                }
+            });
+        }
+        
+        // Инициализация страницы
+        async function init() {
+            // Проверяем авторизацию
+            checkAuth();
+            updateUIForAuth();
+            
+            // Загружаем список выставок для просмотра
+            await loadExhibitionsList();
+            
+            // Если пользователь авторизован, загружаем выставки для select
+            if (authToken) {
+                await loadExhibitionsForSelect();
+            }
+        }
+        
+        init();
+    </script>
+</body>
+</html>
